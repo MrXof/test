@@ -1,43 +1,168 @@
 
 import SwiftUI
+
+protocol HabitRepresentable {
+    var id: UUID { get }
+    var name: String { get set }
+    var icon: String { get set }
+    var colorHex: String { get set }
+    var createdAt: Date { get set }
+    var weekdays: [Int] { get set }
+    var reminderEnabled: Bool { get set }
+    var reminderTime: Date? { get set }
+    var completions: [Date] { get set }
+
+    func isScheduled(on date: Date) -> Bool
+    func hasCompletion(on date: Date) -> Bool
+    mutating func toggleToday()
+    func currentStreak(reference: Date) -> Int
+    func weeklyProgress(weekOf reference: Date) -> Double
+}
+fileprivate func hhtISOWeekday(_ date: Date) -> Int {
+    let w = Calendar.current.component(.weekday, from: date)
+    return w == 1 ? 7 : w - 1
+}
+fileprivate func hhtStartOfDay(_ date: Date) -> Date {
+    Calendar.current.startOfDay(for: date)
+}
+fileprivate func hhtColorFromHex(_ hex: String) -> Color {
+    var s = hex.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    if s.hasPrefix("#") { s.removeFirst() }
+    var rgb: UInt64 = 0
+    Scanner(string: s).scanHexInt64(&rgb)
+    let r, g, b: Double
+    if s.count == 6 {
+        r = Double((rgb & 0xFF0000) >> 16) / 255
+        g = Double((rgb & 0x00FF00) >> 8) / 255
+        b = Double(rgb & 0x0000FF) / 255
+    } else { r = 0.31; g = 0.27; b = 0.90 }
+    return Color(red: r, green: g, blue: b)
+}
+
+extension HabitRepresentable {
+    func isScheduled(on date: Date) -> Bool {
+        weekdays.contains(hhtISOWeekday(date))
+    }
+    func hasCompletion(on date: Date) -> Bool {
+        let d = hhtStartOfDay(date)
+        return completions.contains { Calendar.current.isDate($0, inSameDayAs: d) }
+    }
+    mutating func toggleToday() {
+        let today = hhtStartOfDay(Date())
+        if let idx = completions.firstIndex(where: { Calendar.current.isDate($0, inSameDayAs: today) }) {
+            completions.remove(at: idx)
+        } else {
+            completions.append(today)
+        }
+    }
+    func currentStreak(reference: Date = .now) -> Int {
+        var streak = 0
+        var day = hhtStartOfDay(reference)
+        let cal = Calendar.current
+        while true {
+            if !isScheduled(on: day) {
+                guard let prev = cal.date(byAdding: .day, value: -1, to: day) else { break }
+                day = prev
+                continue
+            }
+            if hasCompletion(on: day) {
+                streak += 1
+                guard let prev = cal.date(byAdding: .day, value: -1, to: day) else { break }
+                day = prev
+            } else {
+                break
+            }
+        }
+        return streak
+    }
+    func weeklyProgress(weekOf reference: Date = .now) -> Double {
+        let scheduledSet = Set(weekdays)
+        if scheduledSet.isEmpty { return 0 }
+        let cal = Calendar.current
+        let startOfWeek = cal.date(from: cal.dateComponents([.yearForWeekOfYear, .weekOfYear], from: reference)) ?? hhtStartOfDay(reference)
+        let days = (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: startOfWeek) }
+        let relevantDays = days.filter { scheduledSet.contains(hhtISOWeekday($0)) }
+        if relevantDays.isEmpty { return 0 }
+        let doneCount = relevantDays.reduce(0) { $0 + (hasCompletion(on: $1) ? 1 : 0) }
+        return Double(doneCount) / Double(relevantDays.count)
+    }
+}
+
+struct HabitMock: HabitRepresentable, Identifiable {
+    var id: UUID = UUID()
+    var name: String
+    var icon: String
+    var colorHex: String
+    var createdAt: Date
+    var weekdays: [Int]
+    var reminderEnabled: Bool
+    var reminderTime: Date?
+    var completions: [Date]
+
+    init(
+        name: String = "Read 20 min",
+        icon: String = "book.fill",
+        colorHex: String = "#22C55E",
+        createdAt: Date = .now,
+        weekdays: [Int] = [1,2,3,4,5,6,7],
+        reminderEnabled: Bool = false,
+        reminderTime: Date? = nil,
+        completions: [Date] = []
+    ) {
+        self.name = name
+        self.icon = icon
+        self.colorHex = colorHex
+        self.createdAt = createdAt
+        self.weekdays = weekdays
+        self.reminderEnabled = reminderEnabled
+        self.reminderTime = reminderTime
+        self.completions = completions.map { hhtStartOfDay($0) }
+    }
+}
+
+#if canImport(SwiftData)
 import SwiftData
+@available(iOS 17, *)
+extension Habit: HabitRepresentable {}
+#endif
 
-struct HabitDetailView: View {
+
+struct HabitDetailView<H: HabitRepresentable>: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.modelContext) private var context
-
-    let habit: Habit
+    @State private var model: H
     @State private var shownMonth: Date = .now
+
+    init(habit: H) {
+        _model = State(initialValue: habit)
+    }
 
     var body: some View {
         NavigationStack {
             ZStack {
                 LinearGradient(
-                    colors: [Color(hex: "#0EA5E9").opacity(0.10), Color(hex: "#8B5CF6").opacity(0.10)],
+                    colors: [hhtColorFromHex("#0EA5E9").opacity(0.10), hhtColorFromHex("#8B5CF6").opacity(0.10)],
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 )
                 .ignoresSafeArea()
 
                 ScrollView {
                     VStack(spacing: 16) {
-
                         GlassCard {
                             HStack(spacing: 16) {
                                 ZStack {
                                     Circle()
-                                        .fill(Color(hex: habit.colorHex).opacity(0.18))
+                                        .fill(hhtColorFromHex(model.colorHex).opacity(0.18))
                                         .frame(width: 64, height: 64)
-                                    Image(systemName: habit.icon)
+                                    Image(systemName: model.icon)
                                         .font(.system(size: 28, weight: .semibold))
-                                        .foregroundStyle(Color(hex: habit.colorHex))
+                                        .foregroundStyle(hhtColorFromHex(model.colorHex))
                                 }
-
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text(habit.name)
+                                    Text(model.name)
                                         .font(.title2.bold())
                                     HStack(spacing: 10) {
-                                        StatChip(icon: "flame.fill", title: "", value: "\(habit.currentStreak()) days")
-                                        if habit.reminderEnabled, let t = habit.reminderTime {
+                                        StatChip(icon: "flame.fill", title: "", value: "\(model.currentStreak()) days")
+                                        if model.reminderEnabled, let t = model.reminderTime {
                                             StatChip(icon: "bell.fill", title: "Reminder", value: t.formatted(date: .omitted, time: .shortened))
                                         }
                                     }
@@ -50,39 +175,41 @@ struct HabitDetailView: View {
 
                         GlassCard {
                             VStack(alignment: .leading, spacing: 10) {
-                                Text("This Week")
-                                    .font(.headline)
-                                ProgressBar(progress: habit.weeklyProgress())
+                                Text("This Week").font(.headline)
+                                ProgressBar(progress: model.weeklyProgress())
                                     .frame(height: 12)
                             }
                         }
                         .padding(.horizontal, 16)
 
                         GlassCard {
-                            CalendarMonthView(
-                                habit: habit,
-                                month: shownMonth,
-                                onToggleDay: toggleCompletion
-                            )
+                            CalendarMonthView(habit: model, month: shownMonth, onToggleDay: toggleCompletion)
                         }
                         .padding(.horizontal, 16)
-
                         HStack(spacing: 12) {
                             Button {
                                 withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-                                    habit.toggleToday()
+                                    model.toggleToday()
                                 }
                             } label: {
-                                Label(habit.hasCompletion(on: .now) ? "Unmark Today" : "Mark Today", systemImage: habit.hasCompletion(on: .now) ? "minus.circle.fill" : "checkmark.circle.fill")
+                                Label(
+                                    model.hasCompletion(on: .now) ? "Unmark Today" : "Mark Today",
+                                    systemImage: model.hasCompletion(on: .now) ? "minus.circle.fill" : "checkmark.circle.fill"
+                                )
                             }
                             .buttonStyle(.borderedProminent)
 
-                            NavigationLink {
-                                AddEditHabitView(habitToEdit: habit)
-                            } label: {
-                                Label("Edit", systemImage: "square.and.pencil")
+                            #if canImport(SwiftData)
+                            if #available(iOS 17, *),
+                               let realHabit = model as? Habit {
+                                NavigationLink {
+                                    AddEditHabitView(habitToEdit: realHabit)
+                                } label: {
+                                    Label("Edit", systemImage: "square.and.pencil")
+                                }
+                                .buttonStyle(.bordered)
                             }
-                            .buttonStyle(.bordered)
+                            #endif
                         }
                         .padding(.horizontal, 16)
                         .padding(.bottom, 8)
@@ -101,17 +228,17 @@ struct HabitDetailView: View {
     }
 
     private func toggleCompletion(_ date: Date) {
-        let d = date.startOfDay
-        if let idx = habit.completions.firstIndex(where: { Calendar.current.isDate($0, inSameDayAs: d) }) {
-            habit.completions.remove(at: idx)
+        let d = hhtStartOfDay(date)
+        if let idx = model.completions.firstIndex(where: { Calendar.current.isDate($0, inSameDayAs: d) }) {
+            model.completions.remove(at: idx)
         } else {
-            habit.completions.append(d)
+            model.completions.append(d)
         }
     }
 }
 
-fileprivate struct CalendarMonthView: View {
-    let habit: Habit
+fileprivate struct CalendarMonthView<H: HabitRepresentable>: View {
+    let habit: H
     let month: Date
     var onToggleDay: (Date) -> Void
 
@@ -123,20 +250,16 @@ fileprivate struct CalendarMonthView: View {
     var body: some View {
         VStack(spacing: 10) {
             header
-
             HStack {
                 ForEach(weekSymbols, id: \.self) { s in
                     Text(s).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
                 }
             }
-
             let grid = monthGrid(for: currentMonth)
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7), spacing: 6) {
                 ForEach(grid, id: \.self) { maybeDate in
                     if let date = maybeDate {
-                        DayCell(date: date, habit: habit) {
-                            onToggleDay(date)
-                        }
+                        DayCell(date: date, habit: habit) { onToggleDay(date) }
                     } else {
                         Rectangle().fill(Color.clear).frame(height: 34)
                     }
@@ -158,10 +281,8 @@ fileprivate struct CalendarMonthView: View {
             .buttonStyle(.plain)
 
             Spacer()
-
             Text(currentMonth, format: .dateTime.year().month(.wide))
                 .font(.headline)
-
             Spacer()
 
             Button {
@@ -203,10 +324,9 @@ fileprivate struct CalendarMonthView: View {
         .padding(.top, 6)
     }
 }
-
-fileprivate struct DayCell: View {
+fileprivate struct DayCell<H: HabitRepresentable>: View {
     let date: Date
-    let habit: Habit
+    let habit: H
     var onTap: () -> Void
 
     var body: some View {
@@ -248,10 +368,10 @@ fileprivate struct StatChip: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
-            Text(title)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .fontWeight(.semibold)
+            if !title.isEmpty {
+                Text(title).foregroundStyle(.secondary)
+            }
+            Text(value).fontWeight(.semibold)
         }
         .font(.caption)
         .padding(.horizontal, 10)
@@ -294,30 +414,26 @@ fileprivate struct LegendDot: View {
     }
 }
 
+
 #if DEBUG
 struct HabitDetailView_Previews: PreviewProvider {
     static var previews: some View {
-        let container = previewContainer
-        let context = container.mainContext
-        let fetch = FetchDescriptor<Habit>()
-        let habits = (try? context.fetch(fetch)) ?? []
+        let mock = HabitMock(
+            name: "Read 20 min",
+            icon: "book.fill",
+            colorHex: "#22C55E",
+            weekdays: [1,2,3,4,5],
+            reminderEnabled: true,
+            reminderTime: Calendar.current.date(bySettingHour: 19, minute: 0, second: 0, of: .now),
+            completions: [Date(), Date().addingTimeInterval(-86400*1), Date().addingTimeInterval(-86400*3)]
+        )
 
-        return Group {
-            if let sample = habits.first {
-                NavigationStack {
-                    HabitDetailView(habit: sample)
-                }
-                .modelContainer(container)
+        Group {
+            NavigationStack { HabitDetailView(habit: mock) }
                 .preferredColorScheme(.light)
 
-                NavigationStack {
-                    HabitDetailView(habit: sample)
-                }
-                .modelContainer(container)
+            NavigationStack { HabitDetailView(habit: mock) }
                 .preferredColorScheme(.dark)
-            } else {
-                Text("⚠️ No data in previewContainer")
-            }
         }
     }
 }

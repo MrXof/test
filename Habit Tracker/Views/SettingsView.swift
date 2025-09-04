@@ -4,8 +4,8 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage("hasOnboarded") private var hasOnboarded = true
 
-    private let privacyURL = URL(string: "https://example.com/privacy")!
-    private let termsURL   = URL(string: "https://example.com/terms")!
+    private let privacyURL = URL(string: "https://docs.google.com/document/d/1AbkoLKHej8z3EAmHam6Ii5jEnlhU1g_D-UvVhy3qJyw/edit?usp=sharing")!
+    private let termsURL   = URL(string: "https://docs.google.com/forms/d/e/1FAIpQLSfCFgudDupfivsvW8CzyJfRReMh6CNjL9yv08JcVSG4wO4UpQ/viewform?usp=header")!
 
     var body: some View {
         ZStack {
@@ -53,13 +53,13 @@ struct SettingsView: View {
                         Divider().opacity(0.08)
                         InfoRow(label: "Version", value: "1.0")
                         Divider().opacity(0.08)
-                        InfoRow(label: "Developer", value: "...")
+                        InfoRow(label: "Developer", value: "Max Korkoskii")
                     }
 
                     GlassSection(title: "Legal") {
                         LinkRow(title: "Privacy Policy", systemImage: "lock.shield.fill", destination: privacyURL)
                         Divider().opacity(0.08)
-                        LinkRow(title: "Terms of Use", systemImage: "doc.text.fill", destination: termsURL)
+                        LinkRow(title: "Support", systemImage: "doc.text.fill", destination: termsURL)
                     }
 
                     Spacer(minLength: 8)
